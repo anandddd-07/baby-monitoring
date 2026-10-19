@@ -6,6 +6,8 @@ Runs three checks on every webcam frame:
   2. Body : pose points -> motion model + OpenCV frame difference -> NO MOVING / BODY MOVING
   3. Area : body points against user-drawn polygon -> INSIDE / OUTSIDE
 """
+import os
+import sys
 import time
 import threading
 from collections import deque
@@ -40,6 +42,17 @@ PREDICT_EVERY = 10
 ALERT_EVERY = 15
 
 
+def _base_dir():
+    """Folder that holds the project files, also works inside a packaged app."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+BASE_DIR = _base_dir()
+EYE_MODEL_PATH = os.path.join(BASE_DIR, "model30.h5")
+
+
 def distance(p1, p2):
     return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
@@ -56,7 +69,7 @@ def ear_from_points(pts):
 
 class Detect_final:
     def __init__(self):
-        self.model_eye_lstm = tf.keras.models.load_model("model30.h5", compile=False)
+        self.model_eye_lstm = tf.keras.models.load_model(EYE_MODEL_PATH, compile=False)
 
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,

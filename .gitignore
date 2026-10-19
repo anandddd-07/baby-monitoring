@@ -9,3 +9,8 @@ backup/
 .env
 .DS_Store
 Thumbs.db
+build/
+dist/
+*.spec
+build_log.txt
+alert_snapshots/

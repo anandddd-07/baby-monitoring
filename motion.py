@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import sys
 
 import numpy as np
 
@@ -11,7 +12,16 @@ import numpy as np
 UPPER_BODY_POINTS = (0, 11, 12, 13, 14, 15, 16)  # nose, shoulders, elbows, wrists
 VISIBILITY_THRESHOLD = 0.5
 WINDOW = 30
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "motion_model.json")
+
+
+def _base_dir():
+    """Folder that holds the project files, also works inside a packaged app."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+MODEL_PATH = os.path.join(_base_dir(), "motion_model.json")
 
 
 def _as_keypoints(frame):

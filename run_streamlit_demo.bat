@@ -1,4 +1,10 @@
 @echo off
-cd /d "C:\Users\anand\Downloads\Monitoring-Baby-System-based-on-Deep-Learning-main\Monitoring-Baby-System-based-on-Deep-Learning-main"
-.\venv311\Scripts\python.exe -m streamlit run app.py
+REM Launch the Baby Monitoring System Streamlit demo.
+cd /d "%~dp0"
+
+if exist "venv311\Scripts\python.exe" (
+    "venv311\Scripts\python.exe" -m streamlit run app.py
+) else (
+    python -m streamlit run app.py
+)
 pause

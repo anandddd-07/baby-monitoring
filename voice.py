@@ -19,7 +19,15 @@ import threading
 
 VOICE_ENABLED = True
 
-AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio")
+
+def _base_dir():
+    """Folder that holds the project files, also works inside a packaged app."""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+AUDIO_DIR = os.path.join(_base_dir(), "audio")
 EXTENSIONS = ("wav", "mp3", "ogg")
 
 _lock = threading.Lock()
