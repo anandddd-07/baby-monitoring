@@ -46,6 +46,46 @@ Then:
 2. Set the safe area with the sliders.
 3. Test still, awake, moving, and outside states.
 
+## Run it as a PUBLIC website
+
+The webcam is physically attached to your laptop, so the app has to run on your
+machine. A **tunnel** forwards your local app to a public https address so anyone
+on the internet can watch the live feed.
+
+Double-click:
+
+```text
+start_public_website.bat
+```
+
+Or run:
+
+```powershell
+venv311\Scripts\python.exe public_website.py
+```
+
+This starts the app, creates a public URL, prints it, and opens it in your
+browser. The app then shows a green **PUBLIC WEBSITE** banner with the address.
+
+The URL is a free random `trycloudflare.com` address and changes on every start.
+Your laptop must stay on and the window must stay open while you share.
+
+To also get a desktop shortcut with an icon, run this once:
+
+```powershell
+venv311\Scripts\python.exe create_desktop_shortcut.py
+```
+
+It creates **Baby Monitor - Public Website** on your desktop.
+
+| File | What it does |
+|---|---|
+| `start_public_website.bat` | Public URL, opens in browser |
+| `public_website.py` | The script behind it |
+| `create_desktop_shortcut.py` | Makes the desktop icon |
+| `start_baby_monitor.bat` | Packaged `.exe` (localhost only) |
+| `run_streamlit_demo.bat` | Fastest local run, no tunnel |
+
 ## Custom audio
 
 Place these files in `audio/`:

@@ -89,6 +89,29 @@ st.markdown(
         font-size: 0.82rem;
         line-height: 1.45;
     }
+    .public-banner {
+        margin: 0.45rem 0 0.2rem 0;
+        padding: 0.5rem 0.9rem;
+        border-radius: 12px;
+        border: 1px solid rgba(52, 211, 153, 0.45);
+        background: rgba(52, 211, 153, 0.10);
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-size: 0.85rem;
+    }
+    .public-dot {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: #34d399; display: inline-block;
+    }
+    .public-label {
+        color: #86efac; font-weight: 800;
+        letter-spacing: 0.12em; font-size: 0.72rem;
+    }
+    .public-url {
+        color: #f8fbff; font-family: Consolas, Menlo, monospace;
+        font-size: 0.85rem; overflow-wrap: anywhere;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -172,6 +195,21 @@ with head_left:
 with head_right:
     live_class = "live-pill" if run else "live-pill offline"
     st.markdown(f'<div class="{live_class}"><span class="live-dot"></span> LIVE</div>', unsafe_allow_html=True)
+
+# Show the public address when the app is running behind a tunnel.
+public_url = os.environ.get("BABY_MONITOR_PUBLIC_URL", "").strip()
+if public_url:
+    st.markdown(
+        """
+        <div class="public-banner">
+            <span class="public-dot"></span>
+            <span class="public-label">PUBLIC WEBSITE</span>
+            <span class="public-url">%s</span>
+        </div>
+        """
+        % public_url.replace("&", "&amp;"),
+        unsafe_allow_html=True,
+    )
 
 # ---------------------------------------------------------------- main
 main_left, main_right = st.columns([2.2, 1], gap="medium")
