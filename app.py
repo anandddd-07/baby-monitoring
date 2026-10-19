@@ -189,19 +189,20 @@ with st.sidebar.expander("Alerts and detection"):
 
 with st.sidebar.expander("Video streaming"):
     # Public tunnels have limited bandwidth, so let the user trade quality for speed.
+    # Locally we can afford full quality, over a tunnel we need to cut the bytes.
     is_public = bool(os.environ.get("BABY_MONITOR_PUBLIC_URL", "").strip())
-    default_index = 2 if is_public else 1
+    default_index = 2 if is_public else 0
     stream_quality = st.selectbox(
         "Quality",
         ["Smooth (local)", "Balanced", "Fast (public)"],
         index=default_index,
     )
     if stream_quality == "Smooth (local)":
-        preview_width, jpeg_quality, target_fps = 960, 85, 20
+        preview_width, jpeg_quality, target_fps = 960, 88, 30
     elif stream_quality == "Balanced":
-        preview_width, jpeg_quality, target_fps = 640, 70, 12
+        preview_width, jpeg_quality, target_fps = 640, 75, 20
     else:
-        preview_width, jpeg_quality, target_fps = 480, 50, 8
+        preview_width, jpeg_quality, target_fps = 480, 55, 10
 
     st.caption(
         "Lower quality and a lower frame rate send fewer bytes, which keeps "
@@ -298,6 +299,7 @@ else:
             last_panel_update = 0
             last_push = 0.0
             sent_frames = 0
+            alert_key = None
 
             while True:
                 ok, frame = cap.read()
@@ -339,6 +341,14 @@ else:
                 current = {"eyes": model.label_eye, "body": model.label, "area": model.label_outside}
                 previous = st.session_state.prev_labels
                 actions = []
+
+                # Collect chart samples. This is cheap, the expensive part is
+                # drawing the chart, which happens far less often.
+                st.session_state.chart_ear.append(model.ear)
+                st.session_state.chart_motion.append(float(getattr(model, "body_probability", 0.0)))
+                st.session_state.chart_ear = st.session_state.chart_ear[-60:]
+                st.session_state.chart_motion = st.session_state.chart_motion[-60:]
+
                 if previous["eyes"] is not None and previous["eyes"] != current["eyes"]:
                     if current["eyes"] == "AWAKE":
                         actions.append("Baby is AWAKE")
@@ -371,7 +381,10 @@ else:
                         st.session_state.event_log.append("%s Snapshot saved" % time.strftime("%H:%M:%S"))
 
                 frame_number += 1
-                if frame_number % 5 == 0 or actions:
+                # The chart and the summary are expensive to redraw, so they are
+                # updated far less often than the video. Redrawing them on every
+                # few frames is what made the video look choppy.
+                if frame_number % 4 == 0 or actions:
                     tone_body = "warn" if model.label == "BODY MOVING" else "good"
                     tone_eye = "warn" if model.label_eye == "AWAKE" else "good"
                     tone_area = "bad" if model.label_outside == "OUTSIDE" else "good"
@@ -399,16 +412,22 @@ else:
                     )
                     status_live.markdown(live_status)
 
-                    if model.label_outside == "OUTSIDE":
-                        alert_slot.error("⚠️ Baby is OUTSIDE the safe area")
-                    elif model.label_eye == "AWAKE":
-                        alert_slot.warning("Baby is awake")
-                    elif model.label == "BODY MOVING":
-                        alert_slot.warning("Baby is moving")
-                    else:
-                        alert_slot.success("All calm")
+                    # Only redraw the alert banner when the message actually changes.
+                    if actions or alert_key != st.session_state.get("alert_key"):
+                        alert_key = current["area"] + "|" + current["eyes"] + "|" + current["body"]
+                        st.session_state.alert_key = alert_key
+                        if model.label_outside == "OUTSIDE":
+                            alert_slot.error("⚠️ Baby is OUTSIDE the safe area")
+                        elif model.label_eye == "AWAKE":
+                            alert_slot.warning("Baby is awake")
+                        elif model.label == "BODY MOVING":
+                            alert_slot.warning("Baby is moving")
+                        else:
+                            alert_slot.success("All calm")
 
-                    event_slot.markdown("\n".join(st.session_state.event_log[-15:]) or "No important events yet.")
+                if frame_number % 30 == 0 or actions:
+                    if actions:
+                        event_slot.markdown("\n".join(st.session_state.event_log[-15:]) or "No important events yet.")
 
                     fps = frames / max(time.time() - fps_start, 0.001)
                     sent_fps = sent_frames / max(time.time() - fps_start, 0.001)
