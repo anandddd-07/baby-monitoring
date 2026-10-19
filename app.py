@@ -8,6 +8,7 @@ import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import time
+import threading
 import cv2
 import datetime
 import streamlit as st
@@ -15,6 +16,7 @@ import numpy as np
 import voice
 
 from detect_file import Detect_final
+from stream_server import MjpegServer
 
 st.set_page_config(
     page_title="Baby Monitoring System",
@@ -160,14 +162,6 @@ def encode_jpeg(frame, quality):
 
 if "event_log" not in st.session_state:
     st.session_state.event_log = []
-if "chart_ear" not in st.session_state:
-    st.session_state.chart_ear = []
-if "chart_motion" not in st.session_state:
-    st.session_state.chart_motion = []
-if "prev_labels" not in st.session_state:
-    st.session_state.prev_labels = {"eyes": None, "body": None, "area": None}
-if "activity" not in st.session_state:
-    st.session_state.activity = {"start": time.time(), "awake": 0.0, "moving": 0.0, "outside": 0.0, "alerts": 0, "last": time.time()}
 
 
 # ---------------------------------------------------------------- sidebar
@@ -198,15 +192,15 @@ with st.sidebar.expander("Video streaming"):
         index=default_index,
     )
     if stream_quality == "Smooth (local)":
-        preview_width, jpeg_quality, target_fps = 960, 88, 30
+        preview_width, jpeg_quality = 960, 88
     elif stream_quality == "Balanced":
-        preview_width, jpeg_quality, target_fps = 640, 75, 20
+        preview_width, jpeg_quality = 640, 75
     else:
-        preview_width, jpeg_quality, target_fps = 480, 55, 10
+        preview_width, jpeg_quality = 480, 55
 
     st.caption(
-        "Lower quality and a lower frame rate send fewer bytes, which keeps "
-        "the video smooth when viewed through a public tunnel."
+        "Lower quality sends fewer bytes, which keeps the video smooth when "
+        "viewed through a public tunnel."
     )
 
 if large_text:
@@ -281,74 +275,148 @@ elif left >= right or top >= bottom:
 else:
     model = load_model()
     model.reset()
-    st.session_state.prev_labels = {"eyes": None, "body": None, "area": None}
 
-    cap = cv2.VideoCapture(int(cam_index))
+    # The detection runs in its own thread and publishes frames to the small
+    # MJPEG server. The browser then gets one long-lived connection instead of
+    # a separate download for every frame, which is what made it choppy.
+    if "mjpeg_server" not in st.session_state:
+        server = MjpegServer(port=8765)
+        if server.start():
+            st.session_state.mjpeg_server = server
+        else:
+            st.session_state.mjpeg_server = None
+    server = st.session_state.get("mjpeg_server")
 
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-    if not cap.isOpened():
-        st.error("Could not open the camera. Close other camera apps and try again.")
+    if server is not None:
+        video_slot.markdown(
+            '<img src="%s" style="width:100%%;border-radius:14px;'
+            'border:1px solid rgba(96,165,250,0.15);" />' % server.url,
+            unsafe_allow_html=True,
+        )
     else:
-        try:
-            frame_number = 0
-            fps_start = time.time()
-            frames = 0
-            last_snapshot = 0.0
-            last_panel_update = 0
-            last_push = 0.0
-            sent_frames = 0
-            alert_key = None
+        video_slot.info("Video stream server unavailable, using slow fallback.")
 
-            while True:
+    # Streamlit re-runs this script whenever a widget changes, so the worker
+    # is created only once and kept in session state. Otherwise every re-run
+    # would start another thread and they would fight over the camera.
+    if "worker_state" not in st.session_state:
+        st.session_state.worker_state = {
+            "lock": threading.Lock(),
+            "labels": {"eyes": "Waiting", "body": "Waiting", "area": "Waiting"},
+            "ear": 0.0,
+            "body_conf": 0.0,
+            "eye_conf": 0.0,
+            "motion": 0.0,
+            "fps": 0.0,
+            "chart_ear": [],
+            "chart_motion": [],
+            "events": [],
+            "alerts": 0,
+            "awake": 0.0,
+            "moving": 0.0,
+            "outside": 0.0,
+            "started": time.time(),
+            "last": time.time(),
+            "stop": False,
+            "config": {},
+            "error": None,
+            "thread": None,
+        }
+    state = st.session_state.worker_state
+
+    # Push the current settings into the worker. The worker reads these each
+    # frame, so changing a slider takes effect immediately.
+    state["config"] = {
+        "model": model,
+        "cam_index": int(cam_index),
+        "area": (left, right, top, bottom),
+        "sensitivity": motion_sensitivity,
+        "quality": jpeg_quality,
+        "width": preview_width,
+        "snapshots": snapshots,
+        "server": server,
+    }
+
+    def worker():
+        """Read the camera, run detection, publish frames."""
+        cap = None
+        opened_index = None
+        detector = None
+        frames = 0
+        fps_start = time.time()
+        previous = {"eyes": None, "body": None, "area": None}
+        last_snapshot = 0.0
+        chart_ear = []
+        chart_motion = []
+
+        try:
+            while not state["stop"]:
+                config = state["config"]
+                detector = config["model"]
+                cam_index = config["cam_index"]
+
+                # Reopen the camera if the user picked a different one.
+                if cap is None or opened_index != cam_index:
+                    if cap is not None:
+                        cap.release()
+                        cap = None
+                    cap = cv2.VideoCapture(cam_index)
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    if not cap.isOpened():
+                        state["error"] = "Could not open the camera."
+                        time.sleep(0.5)
+                        continue
+                    opened_index = cam_index
+                    detector.reset()
+                    previous = {"eyes": None, "body": None, "area": None}
+                    frames = 0
+                    fps_start = time.time()
+
                 ok, frame = cap.read()
                 if not ok:
-                    st.error("Could not read from the camera.")
-                    break
+                    state["error"] = "Could not read from the camera."
+                    time.sleep(0.3)
+                    continue
 
+                state["error"] = None
                 frame = cv2.flip(frame, 1)
-                if frame.shape[1] > preview_width:
-                    scale = preview_width / frame.shape[1]
+                target_width = config["width"]
+                if frame.shape[1] > target_width:
+                    scale = target_width / frame.shape[1]
                     frame = cv2.resize(
                         frame,
-                        (preview_width, int(frame.shape[0] * scale)),
+                        (target_width, int(frame.shape[0] * scale)),
                         interpolation=cv2.INTER_AREA,
                     )
 
+                l, r, t, b = config["area"]
                 h, w = frame.shape[:2]
-                x1, x2 = int(w * left / 100), int(w * right / 100)
-                y1, y2 = int(h * top / 100), int(h * bottom / 100)
+                x1, x2 = int(w * l / 100), int(w * r / 100)
+                y1, y2 = int(h * t / 100), int(h * b / 100)
                 points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2], [x1, y1]]
 
-                model.motion_threshold = motion_sensitivity
-                frame = model.output(frame, points)
-                box_color = (60, 60, 255) if model.label_outside == "OUTSIDE" else (80, 200, 80)
+                detector.motion_threshold = config["sensitivity"]
+                frame = detector.output(frame, points)
+                box_color = (60, 60, 255) if detector.label_outside == "OUTSIDE" else (80, 200, 80)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
-                # Only push a frame to the browser at the chosen frame rate.
-                # Sending every frame as a PNG is what makes a public tunnel crawl.
-                frames += 1
-                now = time.time()
-                if now - last_push >= 1.0 / target_fps:
-                    last_push = now
-                    jpeg = encode_jpeg(frame, jpeg_quality)
-                    if jpeg is not None:
-                        sent_frames += 1
-                        # Streamlit detects the image type from the bytes.
-                        video_slot.image(jpeg, width="stretch")
+                jpeg = encode_jpeg(frame, config["quality"])
+                if jpeg is not None and config["server"] is not None:
+                    config["server"].update(jpeg)
 
-                current = {"eyes": model.label_eye, "body": model.label, "area": model.label_outside}
-                previous = st.session_state.prev_labels
+                current = {
+                    "eyes": detector.label_eye,
+                    "body": detector.label,
+                    "area": detector.label_outside,
+                }
+
+                chart_ear.append(detector.ear)
+                chart_motion.append(float(getattr(detector, "body_probability", 0.0)))
+                chart_ear = chart_ear[-60:]
+                chart_motion = chart_motion[-60:]
+
                 actions = []
-
-                # Collect chart samples. This is cheap, the expensive part is
-                # drawing the chart, which happens far less often.
-                st.session_state.chart_ear.append(model.ear)
-                st.session_state.chart_motion.append(float(getattr(model, "body_probability", 0.0)))
-                st.session_state.chart_ear = st.session_state.chart_ear[-60:]
-                st.session_state.chart_motion = st.session_state.chart_motion[-60:]
-
                 if previous["eyes"] is not None and previous["eyes"] != current["eyes"]:
                     if current["eyes"] == "AWAKE":
                         actions.append("Baby is AWAKE")
@@ -358,124 +426,146 @@ else:
                 if previous["area"] is not None and previous["area"] != current["area"]:
                     if current["area"] == "OUTSIDE":
                         actions.append("Baby is OUTSIDE the safe area")
-                for action in actions:
-                    st.session_state.event_log.append("%s %s" % (time.strftime("%H:%M:%S"), action))
-                    st.session_state.event_log = st.session_state.event_log[-30:]
-                    st.session_state.activity["alerts"] += 1
+                previous = current
 
-                last_seen = st.session_state.activity["last"]
                 now = time.time()
-                dt = max(0.0, min(now - last_seen, 1.0))
-                st.session_state.activity["last"] = now
-                if model.label_eye == "AWAKE":
-                    st.session_state.activity["awake"] += dt
-                if model.label == "BODY MOVING":
-                    st.session_state.activity["moving"] += dt
-                if model.label_outside == "OUTSIDE":
-                    st.session_state.activity["outside"] += dt
-                    if snapshots and now - last_seen > 5.0:
-                        folder = "alert_snapshots"
-                        os.makedirs(folder, exist_ok=True)
-                        image_name = os.path.join(folder, "snapshot_%s.png" % time.strftime("%Y%m%d_%H%M%S"))
-                        cv2.imwrite(image_name, frame)
-                        st.session_state.event_log.append("%s Snapshot saved" % time.strftime("%H:%M:%S"))
+                dt = max(0.0, min(now - state["last"], 1.0))
+                state["last"] = now
 
-                frame_number += 1
-                # The chart and the summary are expensive to redraw, so they are
-                # updated far less often than the video. Redrawing them on every
-                # few frames is what made the video look choppy.
-                if frame_number % 4 == 0 or actions:
-                    tone_body = "warn" if model.label == "BODY MOVING" else "good"
-                    tone_eye = "warn" if model.label_eye == "AWAKE" else "good"
-                    tone_area = "bad" if model.label_outside == "OUTSIDE" else "good"
-                    body_confidence = int(getattr(model, "body_probability", 0.0) * 100)
-                    eye_confidence = int(getattr(model, "eye_probability", 0.0) * 100)
+                frames += 1
+                fps = frames / max(now - fps_start, 0.001)
 
-                    status_slots["Movement"].markdown(
-                        status_card("Movement", model.label, tone_body, f"Confidence: {body_confidence}%"),
-                        unsafe_allow_html=True,
-                    )
-                    status_slots["Baby status"].markdown(
-                        status_card("Baby status", model.label_eye, tone_eye, f"Confidence: {eye_confidence}%"),
-                        unsafe_allow_html=True,
-                    )
-                    status_slots["Boundary"].markdown(
-                        status_card("Boundary", model.label_outside, tone_area, "Safe-area test"),
-                        unsafe_allow_html=True,
-                    )
-
-                    live_status = (
-                        f"**Movement:** {model.label}\n\n"
-                        f"**Eyes:** {model.label_eye}\n\n"
-                        f"**Area:** {model.label_outside}\n\n"
-                        f"**EAR:** {model.ear:.2f}"
-                    )
-                    status_live.markdown(live_status)
-
-                    # Only redraw the alert banner when the message actually changes.
-                    if actions or alert_key != st.session_state.get("alert_key"):
-                        alert_key = current["area"] + "|" + current["eyes"] + "|" + current["body"]
-                        st.session_state.alert_key = alert_key
-                        if model.label_outside == "OUTSIDE":
-                            alert_slot.error("⚠️ Baby is OUTSIDE the safe area")
-                        elif model.label_eye == "AWAKE":
-                            alert_slot.warning("Baby is awake")
-                        elif model.label == "BODY MOVING":
-                            alert_slot.warning("Baby is moving")
-                        else:
-                            alert_slot.success("All calm")
-
-                if frame_number % 30 == 0 or actions:
-                    if actions:
-                        event_slot.markdown("\n".join(st.session_state.event_log[-15:]) or "No important events yet.")
-
-                    fps = frames / max(time.time() - fps_start, 0.001)
-                    sent_fps = sent_frames / max(time.time() - fps_start, 0.001)
-                    details = "EAR: %.2f | FPS: %.0f | Stream: %.0f fps | Movement: %.3f" % (
-                        model.ear,
-                        fps,
-                        sent_fps,
-                        getattr(model, "motion_level", 0.0),
-                    )
-
-                    chart_slot.line_chart(
-                        {
-                            "EAR": list(st.session_state.chart_ear),
-                            "Movement": list(st.session_state.chart_motion),
-                        },
-                        height=185,
-                        width="stretch",
-                    )
-                    summary = st.session_state.activity
-                    summary_slot.markdown(
-                        "**Session summary**\n\n"
-                        "- Awake time: **%.0fs**\n"
-                        "- Moving time: **%.0fs**\n"
-                        "- Outside time: **%.0fs**\n"
-                        "- Alerts recorded: **%d**\n"
-                        "- Session time: **%.0fs**\n"
-                        "- Movement sensitivity: **%.3f**\n"
-                        "- Stream quality: **%s**\n"
-                        "- Last status detail: %s\n"
-                        % (
-                            summary["awake"],
-                            summary["moving"],
-                            summary["outside"],
-                            summary["alerts"],
-                            max(time.time() - summary["start"], 0.001),
-                            motion_sensitivity,
-                            stream_quality,
-                            details,
+                with state["lock"]:
+                    state["labels"] = current
+                    state["ear"] = detector.ear
+                    state["body_conf"] = float(getattr(detector, "body_probability", 0.0))
+                    state["eye_conf"] = float(getattr(detector, "eye_probability", 0.0))
+                    state["motion"] = float(getattr(detector, "motion_level", 0.0))
+                    state["fps"] = fps
+                    state["chart_ear"] = list(chart_ear)
+                    state["chart_motion"] = list(chart_motion)
+                    if current["eyes"] == "AWAKE":
+                        state["awake"] += dt
+                    if current["body"] == "BODY MOVING":
+                        state["moving"] += dt
+                    if current["area"] == "OUTSIDE":
+                        state["outside"] += dt
+                    for action in actions:
+                        state["events"].append(
+                            "%s %s" % (time.strftime("%H:%M:%S"), action)
                         )
-                    )
-            st.session_state.prev_labels = {
-                "eyes": model.label_eye,
-                "body": model.label,
-                "area": model.label_outside,
-            }
+                        state["events"] = state["events"][-30:]
+                        state["alerts"] += 1
+
+                if config["snapshots"] and current["area"] == "OUTSIDE" and now - last_snapshot > 5.0:
+                    last_snapshot = now
+                    folder = "alert_snapshots"
+                    os.makedirs(folder, exist_ok=True)
+                    name = os.path.join(folder, "snapshot_%s.png" % time.strftime("%Y%m%d_%H%M%S"))
+                    cv2.imwrite(name, frame)
+
+                time.sleep(0.001)
         finally:
-            cap.release()
-            voice.VOICE_ENABLED = True
+            if cap is not None:
+                cap.release()
+
+    if state.get("thread") is None or not state["thread"].is_alive():
+        state["stop"] = False
+        state["thread"] = threading.Thread(target=worker, daemon=True)
+        state["thread"].start()
+
+    # The UI thread only refreshes the text panels, never the video itself.
+    last_ui = 0.0
+    while True:
+        if state.get("error"):
+            st.error(state["error"])
+            time.sleep(0.5)
+            continue
+
+        now = time.time()
+        if now - last_ui >= 0.25:
+            last_ui = now
+            with state["lock"]:
+                labels = dict(state["labels"])
+                ear = state["ear"]
+                body_conf = int(state["body_conf"] * 100)
+                eye_conf = int(state["eye_conf"] * 100)
+                motion = state["motion"]
+                fps = state["fps"]
+                events = list(state["events"])
+                alerts = state["alerts"]
+                awake = state["awake"]
+                moving = state["moving"]
+                outside = state["outside"]
+                chart_ear = list(state.get("chart_ear", []))
+                chart_motion = list(state.get("chart_motion", []))
+
+            tone_body = "warn" if labels["body"] == "BODY MOVING" else "good"
+            tone_eye = "warn" if labels["eyes"] == "AWAKE" else "good"
+            tone_area = "bad" if labels["area"] == "OUTSIDE" else "good"
+
+            status_slots["Movement"].markdown(
+                status_card("Movement", labels["body"], tone_body, f"Confidence: {body_conf}%"),
+                unsafe_allow_html=True,
+            )
+            status_slots["Baby status"].markdown(
+                status_card("Baby status", labels["eyes"], tone_eye, f"Confidence: {eye_conf}%"),
+                unsafe_allow_html=True,
+            )
+            status_slots["Boundary"].markdown(
+                status_card("Boundary", labels["area"], tone_area, "Safe-area test"),
+                unsafe_allow_html=True,
+            )
+
+            status_live.markdown(
+                f"**Movement:** {labels['body']}\n\n"
+                f"**Eyes:** {labels['eyes']}\n\n"
+                f"**Area:** {labels['area']}\n\n"
+                f"**EAR:** {ear:.2f}"
+            )
+
+            if labels["area"] == "OUTSIDE":
+                alert_slot.error("⚠️ Baby is OUTSIDE the safe area")
+            elif labels["eyes"] == "AWAKE":
+                alert_slot.warning("Baby is awake")
+            elif labels["body"] == "BODY MOVING":
+                alert_slot.warning("Baby is moving")
+            else:
+                alert_slot.success("All calm")
+
+            event_slot.markdown("\n".join(events[-15:]) or "No important events yet.")
+
+            if len(chart_ear) > 1:
+                chart_slot.line_chart(
+                    {"EAR": chart_ear, "Movement": chart_motion},
+                    height=185,
+                    width="stretch",
+                )
+
+            details = "EAR: %.2f | FPS: %.0f | Movement: %.3f" % (ear, fps, motion)
+            summary_slot.markdown(
+                "**Session summary**\n\n"
+                "- Awake time: **%.0fs**\n"
+                "- Moving time: **%.0fs**\n"
+                "- Outside time: **%.0fs**\n"
+                "- Alerts recorded: **%d**\n"
+                "- Session time: **%.0fs**\n"
+                "- Movement sensitivity: **%.3f**\n"
+                "- Stream quality: **%s**\n"
+                "- Last status detail: %s\n"
+                % (
+                    awake,
+                    moving,
+                    outside,
+                    alerts,
+                    max(time.time() - state["started"], 0.001),
+                    motion_sensitivity,
+                    stream_quality,
+                    details,
+                )
+            )
+
+        time.sleep(0.05)
 
 st.markdown(
     """
