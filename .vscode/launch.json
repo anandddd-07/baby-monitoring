@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "configurations": [
+        {
+            "name": "Baby Monitor (Streamlit app)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}\\app.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "TF_ENABLE_ONEDNN_OPTS": "0"
+            }
+        },
+        {
+            "name": "Baby Monitor (public website)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}\\public_website.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "TF_ENABLE_ONEDNN_OPTS": "0"
+            }
+        },
+        {
+            "name": "Baby Monitor (desktop OpenCV)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}\\main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "TF_ENABLE_ONEDNN_OPTS": "0"
+            }
+        }
+    ]
+}

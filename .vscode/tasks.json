@@ -1,0 +1,62 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Baby Monitor (Streamlit)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\venv311\\Scripts\\python.exe",
+            "args": [
+                "-m",
+                "streamlit",
+                "run",
+                "app.py",
+                "--server.port",
+                "8501",
+                "--browser.gatherUsageStats",
+                "false"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "Run Baby Monitor (public website)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\venv311\\Scripts\\python.exe",
+            "args": ["${workspaceFolder}\\public_website.py"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
+            "label": "Run desktop version (OpenCV window)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\venv311\\Scripts\\python.exe",
+            "args": ["${workspaceFolder}\\main.py"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        }
+    ]
+}
