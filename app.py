@@ -143,6 +143,21 @@ def status_card(label, value, tone_name, extra=""):
     """
 
 
+def encode_jpeg(frame, quality):
+    """Encode a BGR frame as JPEG bytes.
+
+    A PNG frame is roughly 5-10x larger than a JPEG, and every byte has to
+    travel through the tunnel to a remote browser. JPEG keeps the video
+    responsive when the app is used as a public website.
+    """
+    ok, buffer = cv2.imencode(
+        ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+    )
+    if not ok:
+        return None
+    return buffer.tobytes()
+
+
 if "event_log" not in st.session_state:
     st.session_state.event_log = []
 if "chart_ear" not in st.session_state:
@@ -171,7 +186,27 @@ with st.sidebar.expander("Alerts and detection"):
     motion_sensitivity = st.slider("Movement sensitivity", 0.005, 0.150, 0.030, 0.005)
     snapshots = st.toggle("Save snapshots on alerts", value=False)
     large_text = st.toggle("Large text mode", value=False)
-    preview_width = st.select_slider("Preview width", [480, 640, 720, 960], value=640)
+
+with st.sidebar.expander("Video streaming"):
+    # Public tunnels have limited bandwidth, so let the user trade quality for speed.
+    is_public = bool(os.environ.get("BABY_MONITOR_PUBLIC_URL", "").strip())
+    default_index = 2 if is_public else 1
+    stream_quality = st.selectbox(
+        "Quality",
+        ["Smooth (local)", "Balanced", "Fast (public)"],
+        index=default_index,
+    )
+    if stream_quality == "Smooth (local)":
+        preview_width, jpeg_quality, target_fps = 960, 85, 20
+    elif stream_quality == "Balanced":
+        preview_width, jpeg_quality, target_fps = 640, 70, 12
+    else:
+        preview_width, jpeg_quality, target_fps = 480, 50, 8
+
+    st.caption(
+        "Lower quality and a lower frame rate send fewer bytes, which keeps "
+        "the video smooth when viewed through a public tunnel."
+    )
 
 if large_text:
     st.markdown(
@@ -261,6 +296,8 @@ else:
             frames = 0
             last_snapshot = 0.0
             last_panel_update = 0
+            last_push = 0.0
+            sent_frames = 0
 
             while True:
                 ok, frame = cap.read()
@@ -287,7 +324,17 @@ else:
                 box_color = (60, 60, 255) if model.label_outside == "OUTSIDE" else (80, 200, 80)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
-                video_slot.image(frame, channels="BGR", use_container_width=True)
+                # Only push a frame to the browser at the chosen frame rate.
+                # Sending every frame as a PNG is what makes a public tunnel crawl.
+                frames += 1
+                now = time.time()
+                if now - last_push >= 1.0 / target_fps:
+                    last_push = now
+                    jpeg = encode_jpeg(frame, jpeg_quality)
+                    if jpeg is not None:
+                        sent_frames += 1
+                        # Streamlit detects the image type from the bytes.
+                        video_slot.image(jpeg, width="stretch")
 
                 current = {"eyes": model.label_eye, "body": model.label, "area": model.label_outside}
                 previous = st.session_state.prev_labels
@@ -323,7 +370,6 @@ else:
                         cv2.imwrite(image_name, frame)
                         st.session_state.event_log.append("%s Snapshot saved" % time.strftime("%H:%M:%S"))
 
-                frames += 1
                 frame_number += 1
                 if frame_number % 5 == 0 or actions:
                     tone_body = "warn" if model.label == "BODY MOVING" else "good"
@@ -365,9 +411,11 @@ else:
                     event_slot.markdown("\n".join(st.session_state.event_log[-15:]) or "No important events yet.")
 
                     fps = frames / max(time.time() - fps_start, 0.001)
-                    details = "EAR: %.2f | FPS: %.0f | Movement: %.3f" % (
+                    sent_fps = sent_frames / max(time.time() - fps_start, 0.001)
+                    details = "EAR: %.2f | FPS: %.0f | Stream: %.0f fps | Movement: %.3f" % (
                         model.ear,
                         fps,
+                        sent_fps,
                         getattr(model, "motion_level", 0.0),
                     )
 
@@ -377,7 +425,7 @@ else:
                             "Movement": list(st.session_state.chart_motion),
                         },
                         height=185,
-                        use_container_width=True,
+                        width="stretch",
                     )
                     summary = st.session_state.activity
                     summary_slot.markdown(
@@ -388,6 +436,7 @@ else:
                         "- Alerts recorded: **%d**\n"
                         "- Session time: **%.0fs**\n"
                         "- Movement sensitivity: **%.3f**\n"
+                        "- Stream quality: **%s**\n"
                         "- Last status detail: %s\n"
                         % (
                             summary["awake"],
@@ -396,6 +445,7 @@ else:
                             summary["alerts"],
                             max(time.time() - summary["start"], 0.001),
                             motion_sensitivity,
+                            stream_quality,
                             details,
                         )
                     )
