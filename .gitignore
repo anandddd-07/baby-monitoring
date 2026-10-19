@@ -1,0 +1,11 @@
+venv311/
+Python-3.11.17/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+backup/
+*.log
+.env
+.DS_Store
+Thumbs.db
