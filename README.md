@@ -99,3 +99,16 @@ dist\BabyMonitor\BabyMonitor.exe
 packaged app behaves exactly like the local one, including the live webcam.
 Keep the whole `dist\BabyMonitor` folder together when copying it to another PC.
 
+### Note on `tf.keras` and PyInstaller
+
+TensorFlow exposes `tf.keras` through a lazy loader. Inside a PyInstaller build that
+loader can re-enter itself and raise:
+
+```text
+RecursionError: maximum recursion depth exceeded in comparison
+```
+
+`detect_file.py` therefore loads the eye model with the standalone `keras` package
+(`keras.models.load_model`) instead of `tf.keras.models.load_model`. This works the
+same way in both the source version and the packaged app.
+

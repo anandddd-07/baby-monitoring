@@ -15,7 +15,7 @@ from collections import deque
 import cv2
 import numpy as np
 import mediapipe as mp
-import tensorflow as tf
+import keras
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
@@ -53,6 +53,21 @@ BASE_DIR = _base_dir()
 EYE_MODEL_PATH = os.path.join(BASE_DIR, "model30.h5")
 
 
+def load_eye_model(path):
+    """Load the eye LSTM.
+
+    Uses the standalone ``keras`` package on purpose. Inside a PyInstaller
+    build, ``tf.keras`` is a lazy loader that re-enters itself and raises
+    ``RecursionError``, so we avoid that route entirely.
+    """
+    try:
+        return keras.models.load_model(path, compile=False)
+    except RecursionError:
+        import tensorflow as tf
+
+        return tf.keras.models.load_model(path, compile=False)
+
+
 def distance(p1, p2):
     return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
@@ -69,7 +84,7 @@ def ear_from_points(pts):
 
 class Detect_final:
     def __init__(self):
-        self.model_eye_lstm = tf.keras.models.load_model(EYE_MODEL_PATH, compile=False)
+        self.model_eye_lstm = load_eye_model(EYE_MODEL_PATH)
 
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,

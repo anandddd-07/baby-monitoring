@@ -17,11 +17,18 @@ if not exist "venv311\Scripts\python.exe" (
  --collect-all streamlit ^
  --collect-all mediapipe ^
  --collect-all tensorflow ^
+ --collect-all keras ^
+ --collect-all optree ^
  --collect-all cv2 ^
  --collect-all sklearn ^
  --hidden-import detect_file ^
  --hidden-import motion ^
  --hidden-import voice ^
+ --hidden-import keras ^
+ --hidden-import keras.models ^
+ --hidden-import keras.layers ^
+ --hidden-import keras.saving ^
+ --hidden-import optree ^
  --add-data "app.py;." ^
  --add-data "detect_file.py;." ^
  --add-data "motion.py;." ^
@@ -32,6 +39,16 @@ if not exist "venv311\Scripts\python.exe" (
  --add-data "audio;audio" ^
  --add-data "image;image" ^
  run_app.py
+
+REM Keras 3 needs optree, and its compiled .pyd plus DLLs live in a sibling
+REM folder that PyInstaller does not always pick up. Copy them in manually.
+if exist "dist\BabyMonitor\_internal" (
+    for %%D in (optree optree.libs) do (
+        if exist "venv311\Lib\site-packages\%%D" (
+            xcopy /E /I /Y /Q "venv311\Lib\site-packages\%%D" "dist\BabyMonitor\_internal\%%D" >nul
+        )
+    )
+)
 
 echo.
 echo Build finished. The app is in:  dist\BabyMonitor\BabyMonitor.exe
