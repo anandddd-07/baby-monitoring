@@ -6,10 +6,9 @@ It uses EVERY recording it finds:
     Eyes_Closed*.csv -> label 0 (SLEEPING)
 so old and new recordings are combined automatically.
 
-Instead of feeding the raw 30-value sequence to an LSTM (deep learning),
-we summarise each 30-frame window into five classic-ML features:
+The model summarises each 30-frame window into five classic-ML features:
     mean, std, min, max, last EAR value
-and train a scikit-learn Random Forest on them. The saved file is a
+and trains a scikit-learn Random Forest on them. The saved file is a
 small eye_model.joblib that loads in milliseconds.
 """
 import glob

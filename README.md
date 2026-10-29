@@ -151,6 +151,6 @@ dist\BabyMonitor\BabyMonitor.exe
 packaged app behaves exactly like the local one, including the live webcam.
 Keep the whole `dist\BabyMonitor` folder together when copying it to another PC.
 
-Because the models are scikit-learn files (`eye_model.joblib`, `motion_model.json`)
-there is no TensorFlow dependency, so the packaged app starts fast and stays small.
+Because the models are small scikit-learn files (`eye_model.joblib`, `motion_model.json`)
+there is no heavy framework dependency, so the packaged app starts fast and stays small.
 
