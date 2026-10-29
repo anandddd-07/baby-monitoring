@@ -1,25 +1,44 @@
 """
-train_eye.py - trains the eye-state model (model30.h5).
+train_eye.py - trains the eye-state model (Random Forest, classic ML).
 
 It uses EVERY recording it finds:
     Eyes_Open*.csv   -> label 1 (WAKE UP)
     Eyes_Closed*.csv -> label 0 (SLEEPING)
 so old and new recordings are combined automatically.
+
+Instead of feeding the raw 30-value sequence to an LSTM (deep learning),
+we summarise each 30-frame window into five classic-ML features:
+    mean, std, min, max, last EAR value
+and train a scikit-learn Random Forest on them. The saved file is a
+small eye_model.joblib that loads in milliseconds.
 """
 import glob
 
 import numpy as np
 import pandas as pd
-from keras.layers import Input, LSTM, Dense, Dropout
-from keras.models import Sequential
+from joblib import dump
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix
 
 STEPS = 30   # same window length that detect_file.py uses
 
 
+def window_features(win):
+    """Turn one 30-frame EAR window into the 5 features the model sees."""
+    win = np.asarray(win, dtype=float)
+    return np.array([
+        win.mean(),        # average openness over the window
+        win.std(),         # how much it varied (blinks, drowsiness)
+        win.min(),         # most closed moment
+        win.max(),         # most open moment
+        win[-1],           # where the window ended
+    ])
+
+
 def make_windows(csv_name, label):
     ear = pd.read_csv(csv_name)["ear"].values
-    X = np.array([ear[i - STEPS:i] for i in range(STEPS, len(ear))])
-    X = X.reshape(-1, STEPS, 1)
+    X = np.array([window_features(ear[i - STEPS:i])
+                  for i in range(STEPS, len(ear))])
     y = np.full(len(X), label)
     return X, y
 
@@ -48,26 +67,22 @@ if not X_train:
 
 X_train = np.concatenate(X_train); y_train = np.concatenate(y_train)
 X_test = np.concatenate(X_test);   y_test = np.concatenate(y_test)
-
-order = np.random.permutation(len(X_train))
-X_train, y_train = X_train[order], y_train[order]
 print("Train:", X_train.shape, "Test:", X_test.shape)
 
-model = Sequential()
-model.add(Input(shape=(STEPS, 1)))
-model.add(LSTM(32))
-model.add(Dropout(0.2))
-model.add(Dense(1, activation="sigmoid"))
-model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+model = RandomForestClassifier(
+    n_estimators=200,
+    max_depth=None,
+    class_weight="balanced",
+    n_jobs=-1,
+    random_state=42,
+)
+model.fit(X_train, y_train)
 
-model.fit(X_train, y_train, epochs=20, batch_size=32,
-          validation_data=(X_test, y_test))
-
-loss, acc = model.evaluate(X_test, y_test, verbose=0)
-print("Test accuracy:", acc)
+pred = model.predict(X_test)
+acc = accuracy_score(y_test, pred)
+print("Test accuracy:", round(float(acc), 4))
 
 # Confusion matrix: which kind of mistake does the model make?
-pred = (model.predict(X_test, verbose=0).ravel() > 0.5).astype(int)
 tn = int(((pred == 0) & (y_test == 0)).sum())
 fp = int(((pred == 1) & (y_test == 0)).sum())
 fn = int(((pred == 0) & (y_test == 1)).sum())
@@ -77,5 +92,5 @@ print("                SLEEPING   WAKE UP")
 print("real SLEEPING   %8d  %8d" % (tn, fp))
 print("real WAKE UP    %8d  %8d" % (fn, tp))
 
-model.save("model30.h5")
-print("Saved model30.h5")
+dump(model, "eye_model.joblib")
+print("Saved eye_model.joblib")

@@ -14,7 +14,7 @@ The system also shows live status cards, an event log, charts, session summary, 
 - `detect_file.py` - main detection pipeline
 - `motion.py` - body-motion feature extraction
 - `train_motion.py` - trains the body-motion classifier
-- `train_eye.py` / `training.py` - eye-model training scripts
+- `train_eye.py` - trains the eye-state model (scikit-learn Random Forest)
 - `voice.py` - alert speech and custom audio playback
 - `main.py` - desktop OpenCV demo
 - `run_app.py` - launcher used by the packaged Windows app
@@ -102,6 +102,18 @@ Place these files in `audio/`:
 - `venv311/` and Python installer files are intentionally not stored in this repository.
 - The body-motion threshold can be adjusted in the app with **Movement sensitivity**.
 
+## How the models work
+
+Both classifiers are classic machine learning (scikit-learn):
+
+- **Eye state** - `train_eye.py` turns each 30-frame window of EAR values into five
+  features (mean, std, min, max, last) and trains a `RandomForestClassifier`,
+  saved as `eye_model.joblib`. `detect_file.py` predicts every 10th frame.
+- **Body motion** - `train_motion.py` trains a `LogisticRegression` on three
+  motion features, saved as `motion_model.json`.
+- **Safe area** - rule-based geometry: five body landmarks are tested against
+  the user-drawn polygon with Shapely.
+
 ## Build a standalone Windows app (.exe)
 
 The project can be packaged into a single double-clickable app with PyInstaller.
@@ -120,11 +132,11 @@ or build directly:
 
 ```powershell
 venv311\Scripts\pyinstaller --noconfirm --name BabyMonitor --onedir --console ^
- --collect-all streamlit --collect-all mediapipe --collect-all tensorflow ^
+ --collect-all streamlit --collect-all mediapipe ^
  --collect-all cv2 --collect-all sklearn ^
  --hidden-import detect_file --hidden-import motion --hidden-import voice ^
  --add-data "app.py;." --add-data "detect_file.py;." --add-data "motion.py;." ^
- --add-data "voice.py;." --add-data "model.h5;." --add-data "model30.h5;." ^
+ --add-data "voice.py;." --add-data "eye_model.joblib;." ^
  --add-data "motion_model.json;." --add-data "audio;audio" --add-data "image;image" ^
  run_app.py
 ```
@@ -139,16 +151,6 @@ dist\BabyMonitor\BabyMonitor.exe
 packaged app behaves exactly like the local one, including the live webcam.
 Keep the whole `dist\BabyMonitor` folder together when copying it to another PC.
 
-### Note on `tf.keras` and PyInstaller
-
-TensorFlow exposes `tf.keras` through a lazy loader. Inside a PyInstaller build that
-loader can re-enter itself and raise:
-
-```text
-RecursionError: maximum recursion depth exceeded in comparison
-```
-
-`detect_file.py` therefore loads the eye model with the standalone `keras` package
-(`keras.models.load_model`) instead of `tf.keras.models.load_model`. This works the
-same way in both the source version and the packaged app.
+Because the models are scikit-learn files (`eye_model.joblib`, `motion_model.json`)
+there is no TensorFlow dependency, so the packaged app starts fast and stays small.
 

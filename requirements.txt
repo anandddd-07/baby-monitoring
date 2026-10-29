@@ -1,7 +1,6 @@
 streamlit
 opencv-python
 mediapipe
-tensorflow
 scikit-learn
 numpy
 pandas

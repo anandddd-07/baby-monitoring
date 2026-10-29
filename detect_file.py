@@ -2,7 +2,7 @@
 detect_file.py
 
 Runs three checks on every webcam frame:
-  1. Eyes : EAR value  -> LSTM (model30.h5) -> SLEEPING / AWAKE
+  1. Eyes : EAR value  -> Random Forest (eye_model.joblib) -> SLEEPING / AWAKE
   2. Body : pose points -> motion model + OpenCV frame difference -> NO MOVING / BODY MOVING
   3. Area : body points against user-drawn polygon -> INSIDE / OUTSIDE
 """
@@ -15,7 +15,7 @@ from collections import deque
 import cv2
 import numpy as np
 import mediapipe as mp
-import keras
+import joblib
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
@@ -50,22 +50,19 @@ def _base_dir():
 
 
 BASE_DIR = _base_dir()
-EYE_MODEL_PATH = os.path.join(BASE_DIR, "model30.h5")
+EYE_MODEL_PATH = os.path.join(BASE_DIR, "eye_model.joblib")
 
 
 def load_eye_model(path):
-    """Load the eye LSTM.
+    """Load the eye classifier (Random Forest, classic ML).
 
-    Uses the standalone ``keras`` package on purpose. Inside a PyInstaller
-    build, ``tf.keras`` is a lazy loader that re-enters itself and raises
-    ``RecursionError``, so we avoid that route entirely.
+    Returns None if the file is missing so the rest of the app keeps
+    working with a simple EAR-threshold fallback.
     """
     try:
-        return keras.models.load_model(path, compile=False)
-    except RecursionError:
-        import tensorflow as tf
-
-        return tf.keras.models.load_model(path, compile=False)
+        return joblib.load(path)
+    except (OSError, ValueError):
+        return None
 
 
 def distance(p1, p2):
@@ -84,7 +81,7 @@ def ear_from_points(pts):
 
 class Detect_final:
     def __init__(self):
-        self.model_eye_lstm = load_eye_model(EYE_MODEL_PATH)
+        self.model_eye = load_eye_model(EYE_MODEL_PATH)
 
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -131,8 +128,17 @@ class Detect_final:
 
     def _predict_eye(self, seq):
         try:
-            x = np.array(seq, dtype="float32").reshape(1, WINDOW, 1)
-            p = float(self.model_eye_lstm.predict(x, verbose=0)[0][0])
+            seq = np.asarray(seq, dtype=float)
+            # Same 5 features the Random Forest was trained on:
+            # mean, std, min, max, last EAR value of the 30-frame window.
+            x = np.array([[
+                seq.mean(), seq.std(), seq.min(), seq.max(), seq[-1],
+            ]], dtype=float)
+            if self.model_eye is None:
+                # Fallback: classic EAR threshold if the model file is missing.
+                p = 1.0 if seq.mean() > 0.18 else 0.0
+            else:
+                p = float(self.model_eye.predict_proba(x)[0][1])
             self.eye_probability = p
             self.label_eye = "AWAKE" if p > 0.5 else "SLEEPING"
         finally:

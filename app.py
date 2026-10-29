@@ -114,38 +114,6 @@ st.markdown(
         color: #f8fbff; font-family: Consolas, Menlo, monospace;
         font-size: 0.85rem; overflow-wrap: anywhere;
     }
-    /* Bigger "Start camera" switch, placed in the middle of the page. */
-    .st-key-start_camera {
-        display: flex;
-        justify-content: center;
-        margin: 0.15rem 0 0.35rem 0;
-    }
-    .st-key-start_camera [data-testid="stCheckbox"] label {
-        background: rgba(20, 34, 60, 0.95);
-        border: 1px solid rgba(96, 165, 250, 0.30);
-        border-radius: 999px;
-        padding: 0.65rem 1.4rem 0.65rem 1.1rem;
-        gap: 0.9rem;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .st-key-start_camera [data-testid="stCheckbox"] label:hover {
-        border-color: rgba(52, 211, 153, 0.55);
-    }
-    .st-key-start_camera [data-testid="stWidgetLabel"] p {
-        font-size: 1.35rem;
-        font-weight: 800;
-        color: #f8fbff;
-        letter-spacing: 0.02em;
-    }
-    .st-key-start_camera [data-testid="stCheckbox"] [data-testid="stWidgetLabel"] {
-        visibility: visible;
-    }
-    /* Make the switch itself larger. */
-    .st-key-start_camera [data-testid="stCheckbox"] label > div:nth-of-type(1) {
-        transform: scale(1.35);
-        transform-origin: left center;
-        margin-right: 0.45rem;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -195,14 +163,10 @@ def encode_jpeg(frame, quality):
 if "event_log" not in st.session_state:
     st.session_state.event_log = []
 
-# The "Start camera" switch is rendered in the main area, but the header
-# needs to know its value, so the state is tracked here.
-if "start_camera" not in st.session_state:
-    st.session_state.start_camera = False
-
 
 # ---------------------------------------------------------------- sidebar
 st.sidebar.title("Controls")
+run = st.sidebar.toggle("Start camera", value=False)
 cam_index = st.sidebar.number_input("Camera number", 0, 5, 0, 1)
 
 st.sidebar.subheader("Safe area")
@@ -259,7 +223,7 @@ with head_left:
     st.markdown("<div class='header'>Baby Monitoring System</div>", unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Real-Time Baby Monitoring</div>', unsafe_allow_html=True)
 with head_right:
-    live_class = "live-pill" if st.session_state.start_camera else "live-pill offline"
+    live_class = "live-pill" if run else "live-pill offline"
     st.markdown(f'<div class="{live_class}"><span class="live-dot"></span> LIVE</div>', unsafe_allow_html=True)
 
 # Show the public address when the app is running behind a tunnel.
@@ -281,13 +245,6 @@ if public_url:
 main_left, main_right = st.columns([2.2, 1], gap="medium")
 
 with main_left:
-    # The Start camera switch sits in the middle of the page and is made
-    # bigger with CSS, so it is easy to find and click during a demo.
-    run = st.toggle(
-        "Start camera",
-        key="start_camera",
-        on_change=lambda: None,
-    )
     alert_slot = st.empty()
     st.markdown('<div class="camera-title">LIVE WEBCAM FEED</div>', unsafe_allow_html=True)
     video_slot = st.empty()
